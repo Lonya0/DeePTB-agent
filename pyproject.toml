@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=45", "setuptools_scm>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dptb_agent"
+dynamic = ["version"]
+description = "Dptb agent tools for mcp"
+requires-python = ">=3.11"
+dependencies = [
+    "LiteLlm",
+    "google-adk",
+    "gradio",
+    "bohr-agent-sdk @ git+https://github.com/Lonya0/bohr-agent-sdk.git",
+    "mcp>=1.9.0"
+]
+
+[project.scripts]
+dptbagent = "dptb_agent.main:main"
+
+[tool.setuptools]
+package-dir = { "dptb_agent" = "dptb_agent" }
+
+[tool.setuptools_scm]
+
+[tool.setuptools.packages.find]
+where = [""]
+include = ["dptb_agent*"]
+exclude = ["tests*", "docs*", "examples*"]
+
+[tool.pytest.ini_options]
+pythonpath = [""]
+testpaths = ["tests"]
+addopts = "-v"
