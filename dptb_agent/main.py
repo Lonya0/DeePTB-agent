@@ -1,10 +1,10 @@
-from google.adk.agents import LlmAgent
 from dptb_agent.host import create_interface
 import os
 import argparse
 import sys
 from typing import Dict
 from dotenv import load_dotenv
+import logging
 
 
 def parse_arguments():
@@ -60,6 +60,20 @@ def parse_arguments():
 
     return parser.parse_args()
 
+def set_logging(debug: bool):
+    if debug:
+        logging.basicConfig(level=logging.DEBUG,
+                            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                            datefmt='%d %H:%M:%S',
+                            filename='dptb_agent.log',
+                            filemode='w')
+    else:
+        logging.basicConfig(level=logging.WARNING,
+                            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                            datefmt='%d %H:%M:%S',
+                            filename='dptb_agent.log',
+                            filemode='w')
+
 
 def main():
     """主函数"""
@@ -69,6 +83,8 @@ def main():
         print("未找到`.env`文件或无任何变量被读入")
 
     args = parse_arguments()
+    set_logging(args.debug)
+    logging.debug(f"启动参数: {args}")
 
     # 设置API密钥（命令行参数优先）
     if args.api_key:

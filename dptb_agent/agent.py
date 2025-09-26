@@ -1,4 +1,4 @@
-from google.adk.agents import LlmAgent
+from google.adk.agents import Agent
 from google.adk.models.lite_llm import LiteLlm
 import os
 from dp.agent.adapter.adk import CalculationMCPToolset
@@ -16,10 +16,10 @@ def bohrium_executor(email, pwd, pid, image_name: str=None, scass_type: str=None
                 "password": pwd,
                 "program_id": int(pid),
                 "input_data": {
-                    "image_name": "registry.dp.tech/dptech/dp/native/prod-19853/dpa-mcp:0.0.0" if image_name is None else image_name,
+                    "image_name": "registry.dp.tech/dptech/dp/native/prod-35271/deeptb-agent-mcp:0.0.2" if image_name is None else image_name,
                     "job_type": "container",
                     "platform": "ali",
-                    "scass_type": "1 * NVIDIA V100_32g" if scass_type is None else scass_type
+                    "scass_type": "c2_m4_cpu" if scass_type is None else scass_type
                 }
             }
         }
@@ -36,8 +36,8 @@ def bohrium_storage(email, pwd, pid):
 def mcp_tools(mcp_tools_url, bohr_exe, bohr_sto):
     return CalculationMCPToolset(
         connection_params=SseServerParams(url=mcp_tools_url),
-        storage=bohr_exe,
-        executor=bohr_sto
+        executor=bohr_exe,
+        storage=bohr_sto,
     )
 
 model_config = {
@@ -46,11 +46,11 @@ model_config = {
     'api_key': os.getenv("DEEPSEEK_API_KEY")
 }
 
-def create_llm_agent(userinfo: dict, mcp_tools_url: str, mode: str) -> LlmAgent:
-    """根据用户信息创建LlmAgent"""
+def create_agent(userinfo: dict, mcp_tools_url: str, mode: str) -> Agent:
+    """根据用户信息创建Agent"""
 
     if mode == "bohr":
-        agent = LlmAgent(
+        agent = Agent(
             model=LiteLlm(**model_config),
             name=f"deeptb_agent_{get_sha(userinfo)[:8]}",
             description=f"DeePTB agent for project {userinfo['project_id']}.",
@@ -60,6 +60,7 @@ def create_llm_agent(userinfo: dict, mcp_tools_url: str, mode: str) -> LlmAgent:
                 "You are currently in Bohrium integrated mode, when using mcp tools, task will be run on Bohrium nodes."
                 "This mean files input actually happens on Bohrium nodes, with path on them."
                 f"The path is {userinfo['file_path']}, when using mcp tools use them as file path, otherwise the user give you a path."
+                "When using mcp tools, use submit_* tools."
                 "You cannot access the file on Bohrium nodes, but to guide user to check on their Bohrium storage."
                 f"Use default parameters if the users do not mention, but let users confirm them before submission. "
                 f"Always verify the input parameters to users and provide clear explanations of results."
@@ -70,7 +71,7 @@ def create_llm_agent(userinfo: dict, mcp_tools_url: str, mode: str) -> LlmAgent:
         )
     elif mode == "local":
         # TODO
-        agent = LlmAgent(
+        agent = Agent(
             model=LiteLlm(**model_config),
             name=f"deeptb_agent_{get_sha(userinfo)[:8]}",
             description=f"DeePTB agent for project {userinfo['project_id']}.",

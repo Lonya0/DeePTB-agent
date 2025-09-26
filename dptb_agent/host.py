@@ -3,8 +3,8 @@ import json
 import os
 from typing import Dict, List, Tuple
 from dptb_agent.utils import get_sha
-from dptb_agent.agent import create_llm_agent
-from google.adk.agents import LlmAgent
+from dptb_agent.agent import create_agent
+from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
@@ -14,7 +14,7 @@ from dptb_agent import app_name
 session_service = InMemorySessionService()
 
 # 全局变量存储活跃的agents
-active_agents: Dict[str, LlmAgent] = {}
+active_agents: Dict[str, Agent] = {}
 
 
 history_file_path = './chat_history'
@@ -65,7 +65,7 @@ def login(username: str, password: str, project_id: str, file_path: str, mcp_too
     # 创建或获取agent
     if sha_id not in active_agents:
         try:
-            agent = create_llm_agent(userinfo, mcp_tools_url, mode=mode)
+            agent = create_agent(userinfo, mcp_tools_url, mode=mode)
             active_agents[sha_id] = agent
         except Exception as e:
             return gr.update(visible=True), gr.update(visible=False), f"创建Agent失败: {str(e)}", []
@@ -83,63 +83,88 @@ def login(username: str, password: str, project_id: str, file_path: str, mcp_too
         chat_history  # 聊天历史
     )
 
-# from https://google.github.io/adk-docs/tutorials/agent-team/#step-1-your-first-agent-basic-weather-lookup
-async def call_agent_async(query: str, runner, user_id, session_id):
-    """Sends a query to the agent and prints the final response."""
-    #print(f"\n>>> User Query: {query}")
-
-    # Prepare the user's message in ADK format
+# modified from https://google.github.io/adk-docs/tutorials/agent-team/#step-1-your-first-agent-basic-weather-lookup
+async def call_agent_async_stream(query: str, runner, user_id, session_id):
+    """流式传输agent的响应"""
     content = types.Content(role='user', parts=[types.Part(text=query)])
 
-    final_response_text = "Agent did not produce a final response." # Default
-
-    # Key Concept: run_async executes the agent logic and yields Events.
-    # We iterate through events to find the final answer.
     async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=content):
-        # You can uncomment the line below to see *all* events during execution
-        # print(f"  [Event] Author: {event.author}, Type: {type(event).__name__}, Final: {event.is_final_response()}, Content: {event.content}")
-
-        # Key Concept: is_final_response() marks the concluding message for the turn.
+        response_text = ""
+        response_type = "info"
+        
+        # 提取事件中的文本内容
+        if event.content and event.content.parts:
+            response_text = event.content.parts[0].text if event.content.parts[0].text else ""
+        
+        # 根据事件类型分类
         if event.is_final_response():
-            if event.content and event.content.parts:
-                # Assuming text response in the first part
-                final_response_text = event.content.parts[0].text
-            elif event.actions and event.actions.escalate: # Handle potential errors/escalations
-                final_response_text = f"Agent escalated: {event.error_message or 'No specific message.'}"
-            # Add more checks here if needed (e.g., specific error codes)
-            break # Stop processing events once the final response is found
+            response_type = "final"
+        elif event.actions and hasattr(event.actions, 'tool_calls') and event.actions.tool_calls:
+            response_type = "tool_call"
+            tool_names = [tool.name for tool in event.actions.tool_calls]
+            response_text = f"🛠️ 调用工具: {', '.join(tool_names)}"
+        elif "thinking" in str(type(event)).lower():
+            response_type = "thinking"
+            response_text = f"💭 {response_text}" if response_text else "💭 思考中..."
+        
+        # 如果有内容，yield出去
+        if response_text:
+            yield {"type": response_type, "text": response_text, "is_final": event.is_final_response()}
 
-    #print(f"<<< Agent Response: {final_response_text}")
-    return final_response_text
-
-async def chat_with_agent(message: str, history: List[List[str]], userinfo: dict) -> Tuple[
-    List[List[str]], str]:
-    """处理与agent的聊天"""
+async def chat_with_agent_stream(message: str, history: List[List[str]], userinfo: dict):
+    """流式处理与agent的聊天"""
     sha_id = get_sha(userinfo)
 
     if sha_id not in active_agents:
-        return history, "Agent未找到，请重新登录"
+        yield history, "Agent未找到，请重新登录"
+        return
 
     agent = active_agents[sha_id]
-    session = await session_service.create_session(app_name=app_name,
-                                   user_id=userinfo['username'],
-                                   session_id=sha_id)
+    session = await session_service.create_session(
+        app_name=app_name,
+        user_id=userinfo['username'],
+        session_id=sha_id
+    )
 
-    runner = Runner(agent=agent,
-                    app_name=app_name,
-                    session_service=session_service)
+    runner = Runner(
+        agent=agent,
+        app_name=app_name,
+        session_service=session_service
+    )
 
-    final_response_text = await call_agent_async(query=message, runner=runner, user_id=userinfo['username'], session_id=sha_id)
+    # 初始化响应文本
+    full_response = ""
+    new_history = history + [[message, ""]]  # 先添加空响应
+    
+    # 逐块获取响应并更新界面
+    async for chunk in call_agent_async_stream(
+        query=message, 
+        runner=runner, 
+        user_id=userinfo['username'], 
+        session_id=sha_id
+    ):
+        # 根据类型格式化文本
+        if chunk["type"] == "final":
+            formatted_chunk = f"\n\n✅ {chunk['text']}"
+        elif chunk["type"] == "tool_call":
+            formatted_chunk = f"\n\n🛠️ {chunk['text']}"
+        elif chunk["type"] == "thinking":
+            formatted_chunk = f"\n💭 {chunk['text']}"
+        else:
+            formatted_chunk = f"\n{chunk['text']}"
+        
+        # 累加响应文本
+        full_response += formatted_chunk
+        
+        # 更新聊天历史中的最后一条消息
+        new_history[-1][1] = full_response.strip()
+        
+        # 实时更新界面
+        yield new_history, ""
 
-    # 更新聊天历史
-    new_history = history + [[message, final_response_text]]
-
-    # 保存聊天历史
+    # 最终保存聊天历史
     save_chat_history(sha_id, new_history)
-
-    return new_history, ""
-
-
+    yield new_history, "完成"
 
 def logout() -> Tuple[gr.update, gr.update, str, List[List[str]], str, str, str, str]:
     """处理登出逻辑"""
@@ -205,7 +230,6 @@ def create_interface(user_mode: str, mcp_tools_url: str):
 
             chatbot = gr.Chatbot(
                 label="聊天记录",
-                height=900,
                 show_copy_button=True
             )
 
@@ -246,14 +270,17 @@ def create_interface(user_mode: str, mcp_tools_url: str):
         )
 
         # 发送消息事件
-        async def handle_send_message(message, history, userinfo):
+        async def handle_send_message_stream(message, history, userinfo):
             if not message.strip():
-                return history, "消息不能为空"
-            new_history, status = await chat_with_agent(message, history, userinfo=userinfo)
-            return new_history, status
+                yield history, "消息不能为空"
+            
+            # 使用流式处理
+            async for updated_history, status in chat_with_agent_stream(message, history, userinfo):
+                yield updated_history, status
 
+        # 修改按钮事件为流式处理
         send_btn.click(
-            fn=handle_send_message,
+            fn=handle_send_message_stream,
             inputs=[msg, chatbot, userinfo_state],
             outputs=[chatbot, chat_status]
         ).then(
@@ -261,9 +288,9 @@ def create_interface(user_mode: str, mcp_tools_url: str):
             outputs=msg
         )
 
-        # 回车发送消息
+        # 修改回车事件为流式处理
         msg.submit(
-            fn=handle_send_message,
+            fn=handle_send_message_stream,
             inputs=[msg, chatbot, userinfo_state],
             outputs=[chatbot, chat_status]
         ).then(
