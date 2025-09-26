@@ -11,7 +11,7 @@ dependencies = [
     "LiteLlm",
     "google-adk",
     "gradio",
-    "bohr-agent-sdk @ git+https://github.com/Lonya0/bohr-agent-sdk.git",
+    "bohr-agent-sdk",
     "mcp>=1.9.0"
 ]
 
